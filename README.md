@@ -52,9 +52,32 @@ print(f"Knowledge clusters: {report['consolidation_analysis']['semantic_clusters
 
 ## 🛠️ Requirements
 
-- **ChromaDB Server**: Running instance
-- **AWS Bedrock Access**: For embeddings and synthesis
+### Prerequisites
 - **Python 3.8+**
+- **AWS Bedrock Access**: For embeddings and synthesis models
+- **ChromaDB Server**: Running instance for vector storage
+
+### ChromaDB Setup
+```bash
+# Install ChromaDB
+pip install chromadb
+
+# Run ChromaDB server
+chroma run --host localhost --port 8000
+```
+
+### Environment Configuration
+```env
+# AWS Bedrock
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+AWS_REGION=us-east-1
+
+# ChromaDB Connection
+CHROMA_HOST=localhost
+CHROMA_PORT=8000
+CHROMA_COLLECTION=cognitive_memory
+```
 
 ## 📈 Performance
 
