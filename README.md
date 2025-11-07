@@ -2,14 +2,71 @@
 
 A standalone cognitive memory system for AI agents with advanced human-like learning patterns.
 
-## 🚀 Features
+## 🚀 Advanced Memory Features
 
-- **Semantic Clustering**: Auto-organizes memories by conceptual similarity
-- **Forgetting Curve Decay**: Ebbinghaus-based relevance scoring
-- **Memory Consolidation**: Promotes important memories to long-term storage
-- **Progressive Reasoning**: 25-60% memory reuse vs 0% traditional RAG
-- **Metacognitive Awareness**: Self-monitors memory state and gaps
-- **Multi-layered Architecture**: Immediate → Working → Episodic → Vector Store
+### 🧠 Multi-Layered Memory Architecture
+Mimics human cognitive memory with four distinct layers:
+- **Immediate Buffer (8 items)**: Ultra-fast access for current context
+- **Working Buffer (64 items)**: Active processing and reasoning space  
+- **Episodic Buffer (256 items)**: Recent experiences and learned patterns
+- **Vector Store (∞)**: Persistent long-term knowledge repository
+
+### 🔗 Semantic Clustering
+Automatically organizes memories by conceptual similarity using advanced vector operations:
+- **Batch Processing**: Vectorized similarity computations for performance
+- **Dynamic Grouping**: Related memories cluster together naturally
+- **Knowledge Domains**: Separate clusters for different topic areas
+- **Cross-Domain Links**: Discovers unexpected connections between concepts
+
+### 📉 Forgetting Curve Decay
+Implements Ebbinghaus forgetting curve for natural memory fade:
+- **Time-based Decay**: Older memories naturally lose relevance
+- **Access-based Reinforcement**: Frequently used memories stay strong
+- **Importance Weighting**: Critical information resists decay
+- **Adaptive Thresholds**: Memory retention adjusts to usage patterns
+
+### 🔄 Memory Consolidation
+Intelligent promotion system for important knowledge:
+- **Frequency Analysis**: Tracks memory access patterns
+- **Relevance Scoring**: Identifies high-value information
+- **Automatic Promotion**: Moves important memories to long-term storage
+- **Cleanup Operations**: Removes redundant or obsolete memories
+
+### 🎯 Progressive Reasoning
+Builds cumulative understanding across sessions:
+- **25-60% Memory Reuse**: vs 0% traditional RAG systems
+- **Context Accumulation**: Each interaction builds on previous knowledge
+- **Domain Expertise**: Develops specialized knowledge in topic areas
+- **Learning Acceleration**: Faster responses as knowledge grows
+
+### 🤔 Metacognitive Awareness
+Self-monitoring of memory state and information needs:
+- **Gap Detection**: Identifies missing information for tasks
+- **Confidence Scoring**: Assesses reliability of stored knowledge
+- **Memory State Tracking**: Monitors buffer utilization and health
+- **Information Needs**: Proactively identifies research requirements
+
+### 🎛️ Attention Filtering
+Focuses retrieval on task-relevant memories:
+- **Context-Aware Search**: Prioritizes memories matching current task
+- **Relevance Ranking**: Orders memories by importance to query
+- **Noise Reduction**: Filters out irrelevant information
+- **Dynamic Weighting**: Adjusts attention based on task complexity
+
+### 🔧 Task Decomposition
+Breaks complex queries into manageable cognitive subtasks:
+- **Automatic Parsing**: Identifies sub-components of complex requests
+- **Sequential Processing**: Handles subtasks in logical order
+- **Memory Integration**: Combines results from multiple memory searches
+- **Synthesis Operations**: Merges information into coherent responses
+
+### ⚡ Performance Optimizations
+Advanced technical features for production use:
+- **Vectorized Operations**: NumPy-based batch processing
+- **Distance-based Metrics**: Optimized similarity calculations
+- **Lazy Evaluation**: Memory-efficient buffer iteration
+- **Semantic Search**: Vector similarity over keyword matching
+- **Persistent Storage**: ChromaDB integration survives restarts
 
 ## 📦 Installation
 
