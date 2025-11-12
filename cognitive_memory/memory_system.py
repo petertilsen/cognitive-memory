@@ -294,7 +294,8 @@ class CognitiveMemorySystem:
                 else:
                     distance = 1.0  # Maximum distance for zero vectors
                 
-                if distance < 0.3 and len(item.content) > 100:  # Lower distance = better match
+                similarity = 1.0 - distance  # Convert to similarity
+                if similarity > 0.7 and len(item.content) > 100:  # Higher similarity = better match
                     item.boost()
                     relevant_items.append(item)
         
@@ -668,9 +669,9 @@ Please synthesize this information into a coherent and informative, yet succinct
                     )
                     distances = 1.0 - cosine_similarities
                     
-                    # Find best matching cluster (lowest distance)
-                    best_idx = np.argmin(distances)
-                    if distances[best_idx] < 0.2:  # Lower distance = better match
+                    # Find best matching cluster (highest similarity)
+                    best_idx = np.argmax(cosine_similarities)
+                    if cosine_similarities[best_idx] > 0.8:  # Higher similarity = better match
                         clusters[cluster_keys[best_idx]].append(item)
                         assigned = True
             
@@ -687,12 +688,13 @@ Please synthesize this information into a coherent and informative, yet succinct
             results = self.vector_store.search(task, top_k=5)
             # Convert search results to MemoryItem objects
             memory_items = []
-            for doc_id, distance, document, metadata in results:
-                if distance < 1.5:  # Lower distance = better match
+            for doc_id, similarity, document, metadata in results:
+                logger.debug(f"Task memory check: similarity={similarity:.3f} for query='{task[:50]}'")
+                if similarity > 0.80:  # Optimal threshold for progressive reuse
                     memory_item = MemoryItem(
                         content=document,
                         embedding=np.array([]),  # Empty embedding for reuse
-                        relevance_score=2.0 - distance,  # Convert distance to relevance score
+                        relevance_score=similarity,  # Use similarity directly as relevance score
                         access_count=1,
                         task_context=task,
                         source="chromadb_reuse"
