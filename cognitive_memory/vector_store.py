@@ -33,10 +33,10 @@ class VectorStore:
             settings=Settings(allow_reset=True)
         )
 
-        # Get or create collection
+        # Get or create collection with cosine similarity
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
-            metadata={"embedding_model": self.embedding_model.config["model_id"]}
+            metadata={"hnsw:space": "cosine", "embedding_model": self.embedding_model.config["model_id"]}
         )
 
         logger.info(f"Connected to ChromaDB server: {chroma_host}:{chroma_port}")
@@ -86,8 +86,8 @@ class VectorStore:
             logger.error(f"Failed to add document: {e}")
             raise
 
-    def search(self, query: str, top_k: int = 5, threshold: float = 2.0) -> List[Tuple[str, float, str, Dict]]:
-        """Search for similar texts using distance scores (lower = better)."""
+    def search(self, query: str, top_k: int = 5, threshold: float = 0.7) -> List[Tuple[str, float, str, Dict]]:
+        """Search for similar texts using cosine similarity scores (higher = better)."""
         logger.debug(f"Searching for: '{query[:50]}...', top_k={top_k}")
         
         try:
@@ -99,20 +99,20 @@ class VectorStore:
                 include=["documents", "metadatas", "distances"]
             )
             
-            # Use distances directly with vectorized operations
+            # Use similarities directly with vectorized operations
             search_results = []
             if results["ids"] and len(results["ids"]) > 0:
-                # Vectorized distance filtering
-                distances = np.array(results["distances"][0])
-                valid_indices = np.where(distances <= threshold)[0]
+                # Vectorized similarity filtering (higher = better)
+                similarities = 1.0 - np.array(results["distances"][0])  # Convert distance to similarity
+                valid_indices = np.where(similarities >= threshold)[0]
                 
                 # Build results only for valid items
                 for i in valid_indices:
                     doc_id = results["ids"][0][i]
-                    distance = distances[i]
+                    similarity = similarities[i]
                     document = results["documents"][0][i]
                     metadata = results["metadatas"][0][i] or {}
-                    search_results.append((doc_id, distance, document, metadata))
+                    search_results.append((doc_id, similarity, document, metadata))
             
             logger.debug(f"Search found {len(search_results)} results")
             return search_results
@@ -164,7 +164,7 @@ class VectorStore:
             self.client.delete_collection(self.collection_name)
             self.collection = self.client.get_or_create_collection(
                 name=self.collection_name,
-                metadata={"embedding_model": self.embedding_model.config["model_id"]}
+                metadata={"hnsw:space": "cosine", "embedding_model": self.embedding_model.config["model_id"]}
             )
             logger.info(f"Collection reset successfully: {self.collection_name}")
         except Exception as e:
