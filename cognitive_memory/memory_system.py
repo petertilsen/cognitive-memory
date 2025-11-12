@@ -37,7 +37,6 @@ class CognitiveMemorySystem:
         self.immediate_buffer = deque(maxlen=8)
         self.working_buffer = deque(maxlen=64)
         self.episodic_buffer = deque(maxlen=256)
-        self.semantic_memory: Dict[str, MemoryItem] = {}
         
         # Vector storage with ChromaDB
         try:
@@ -62,13 +61,12 @@ class CognitiveMemorySystem:
         
         # Operation logging for reuse analysis
         self.operation_logs = []
-        self.task_start_memory_size = 0  # Track memory size at task start
         
         # Memory management parameters
         self.attention_threshold = 0.5
         self.consolidation_threshold = 0.3
         self.similarity_threshold = 0.7
-        
+
         logger.debug("CognitiveMemorySystem initialization complete")
 
     def process_task(self, task: str, documents: List[str] = None) -> Dict[str, Any]:
@@ -89,12 +87,8 @@ class CognitiveMemorySystem:
         if existing_task_knowledge:
             logger.info(f"Reusing existing knowledge for task: {task[:50]}...")
             return self._reuse_task_knowledge(task, existing_task_knowledge, start_time)
-        # no need to continue if we don't have documents, nor memory
         if not existing_task_knowledge and not documents:
             return {}
-
-        # Track memory size at task start for reuse analysis
-        self.task_start_memory_size = len(self.working_buffer)
         
         # Phase 1: Task understanding and planning
         subtasks = self._decompose_task(task)
@@ -480,23 +474,6 @@ Please synthesize this information into a coherent and informative, yet succinct
         logger.debug(f"Identified {len(information_gaps)} information gaps")
         return information_gaps
 
-    def _update_working_hypothesis(self, new_evidence: str) -> str:
-        """Update working hypothesis based on new evidence."""
-        if not self.cognitive_state:
-            return "No active cognitive state"
-        
-        current_hypothesis = self.cognitive_state.working_hypothesis
-        
-        if not current_hypothesis:
-            # Initial hypothesis
-            self.cognitive_state.working_hypothesis = f"Based on initial evidence: {new_evidence[:100]}..."
-        else:
-            # Update existing hypothesis
-            self.cognitive_state.working_hypothesis = f"{current_hypothesis} | Updated with: {new_evidence[:50]}..."
-        
-        logger.debug("Working hypothesis updated")
-        return self.cognitive_state.working_hypothesis
-
     def _evaluate_confidence(self) -> float:
         """Evaluate confidence based on available information and progress."""
         if not self.cognitive_state:
@@ -532,23 +509,19 @@ Please synthesize this information into a coherent and informative, yet succinct
             logger.error(f"Final synthesis failed: {e}")
             return f"Task: {task}. Based on analysis: {'; '.join(insights[:3])}"
 
-    def _find_similar_memories(self, content: str, threshold: float = 1.5) -> List[Tuple[float, str]]:
-        """Find similar existing memories using distance scores (lower = better)."""
-        results = self.vector_store.search(content, top_k=5, threshold=threshold)
-        return [(distance, text) for _, distance, text, _ in results]
-
     def _search_buffers(self, query: str) -> List[Tuple[str, float, str]]:
         """Search memory buffers for relevant content."""
+        # TODO: introduce for buffer search upon task processing
         results = []
         query_words = set(query.lower().split())
-        
+
         # Search all buffers
         all_buffers = [
             ("immediate", self.immediate_buffer),
             ("working", self.working_buffer),
             ("episodic", self.episodic_buffer)
         ]
-        
+
         for buffer_name, buffer in all_buffers:
             for item in buffer:
                 content_words = set(item.content.lower().split())
@@ -556,47 +529,8 @@ Please synthesize this information into a coherent and informative, yet succinct
                 if overlap > 0:
                     relevance = overlap / len(query_words)
                     results.append((buffer_name, relevance, item.content))
-        
+
         return results
-
-    def _combine_search_results(self, vector_results: List[Tuple], 
-                               buffer_results: List[Tuple], top_k: int) -> List[Tuple]:
-        """Combine and rank search results from different sources."""
-        combined = []
-        
-        # Add vector results with metadata
-        for idx, distance, content, metadata in vector_results:
-            combined.append((idx, distance, content, metadata))  # Use distance directly
-        
-        # Add buffer results
-        for buffer_name, relevance, content in buffer_results:
-            # Check if already in vector results
-            if not any(content == c for _, _, c, _ in combined):
-                combined.append((len(combined), 2.0 - relevance, content, {"source_buffer": buffer_name}))  # Convert to distance-like score
-        
-        # Sort by distance (ascending - lower is better)
-        combined.sort(key=lambda x: x[1])
-        return combined[:top_k]
-
-    def _update_access_pattern(self, content: str) -> None:
-        """Update access patterns for retrieved content."""
-        # Find and boost corresponding memory items
-        for buffer in [self.immediate_buffer, self.working_buffer, self.episodic_buffer]:
-            for item in buffer:
-                if item.content == content:
-                    item.boost()
-                    break
-
-    def _identify_source_buffer(self, content: str) -> str:
-        """Identify which buffer contains the content."""
-        for buffer_name, buffer in [
-            ("immediate", self.immediate_buffer),
-            ("working", self.working_buffer),
-            ("episodic", self.episodic_buffer)
-        ]:
-            if any(item.content == content for item in buffer):
-                return buffer_name
-        return "vector_store"
 
     def _consolidate_memory(self):
         """
@@ -632,6 +566,7 @@ Please synthesize this information into a coherent and informative, yet succinct
                 promoted_count += 1
 
         # Organize semantic clusters
+        # TODO: Store and use clusters for retrieval optimization
         cluster_count = self._organize_semantic_clusters()
 
         logger.debug(f"Memory consolidation complete: removed {removed_count}, promoted {promoted_count}, {cluster_count} clusters")
