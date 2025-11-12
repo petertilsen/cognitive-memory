@@ -80,23 +80,26 @@ class TestVectorStore(unittest.TestCase):
         mock_client.get_or_create_collection.return_value = mock_collection
         mock_client_class.return_value = mock_client
         
-        # Mock search results
+        # Mock search results (distances will be converted to similarities)
         mock_collection.query.return_value = {
             'ids': [['id1', 'id2']],
             'documents': [['doc1', 'doc2']],
             'metadatas': [[{'source': 'test1'}, {'source': 'test2'}]],
-            'distances': [[0.1, 0.2]]
+            'distances': [[0.1, 0.2]]  # Will become similarities 0.9, 0.8
         }
         
         store = VectorStore(self.mock_embedding_model)
         
         with patch.object(store, 'embed', return_value=[0.1, 0.2, 0.3]):
-            results = store.search("test query", top_k=2)
+            results = store.search("test query", top_k=2, threshold=0.7)
             
             self.assertEqual(len(results), 2)
             # Results are tuples: (doc_id, similarity, document, metadata)
             self.assertEqual(results[0][2], 'doc1')  # document
             self.assertEqual(results[0][3]['source'], 'test1')  # metadata
+            # Check similarity values (1.0 - distance)
+            self.assertAlmostEqual(results[0][1], 0.9, places=1)  # similarity
+            self.assertAlmostEqual(results[1][1], 0.8, places=1)  # similarity
             
     @patch('cognitive_memory.vector_store.chromadb.HttpClient')
     def test_count_documents(self, mock_client_class):

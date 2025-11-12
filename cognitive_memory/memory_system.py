@@ -285,10 +285,14 @@ class CognitiveMemorySystem:
         for item in all_buffers:
             if hasattr(item.embedding, 'size') and item.embedding.size > 0:  # Skip items without embeddings
                 # Calculate cosine distance (1.0 - cosine_similarity)
-                cosine_similarity = np.dot(query_embedding, item.embedding) / (
-                    np.linalg.norm(query_embedding) * np.linalg.norm(item.embedding)
-                )
-                distance = 1.0 - cosine_similarity
+                query_norm = np.linalg.norm(query_embedding)
+                item_norm = np.linalg.norm(item.embedding)
+                
+                if query_norm > 0 and item_norm > 0:
+                    cosine_similarity = np.dot(query_embedding, item.embedding) / (query_norm * item_norm)
+                    distance = 1.0 - cosine_similarity
+                else:
+                    distance = 1.0  # Maximum distance for zero vectors
                 
                 if distance < 0.3 and len(item.content) > 100:  # Lower distance = better match
                     item.boost()
