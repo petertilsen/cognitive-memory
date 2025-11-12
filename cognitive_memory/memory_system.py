@@ -141,7 +141,13 @@ class CognitiveMemorySystem:
         return result
 
     def get_metacognitive_status(self) -> Dict[str, Any]:
-        """Get comprehensive metacognitive status."""
+        """
+        TODO:
+        Memory strategy selection (choosing optimal retrieval methods)
+        Metamemory accuracy (reliable confidence calibration)
+        Adaptive behavior based on metacognitive state
+
+        """
         if not self.cognitive_state:
             return {"error": "No active cognitive state"}
         
@@ -262,7 +268,15 @@ class CognitiveMemorySystem:
         return insights
 
     def _check_working_memory(self, query: str) -> List[MemoryItem]:
-        """Check relevant information using vector distance (lower = better)."""
+        """
+        TODO:
+        Context-dependent retrieval cues (environmental triggers)
+        Priming effects (recent activation influences retrieval)
+        Inhibition of competing memories (winner-take-all dynamics)
+        Reconstructive retrieval (memories rebuilt, not replayed)
+        Tip-of-tongue phenomena (partial retrieval states)
+        False memory generation (plausible but incorrect recalls)
+        """
         if not self.vector_store:
             return []
         
@@ -364,7 +378,15 @@ Please synthesize this information into a coherent and informative, yet succinct
         self.immediate_buffer.append(memory_item)
 
     def _intelligent_chunking(self, document: str) -> List[str]:
-        """Intelligent chunking based on semantics rather than fixed size."""
+        """
+        Not intelligent. Naive splitting.
+        TODO:
+        Topic modeling** - Group sentences by semantic similarity
+        Paragraph boundaries** - Respect document structure
+        Named entity recognition** - Keep related entities together
+        Embedding-based clustering** - Group semantically similar content
+        Sliding window overlap** - Preserve context across chunks
+        """
         logger.debug(f"Chunking document of length: {len(document)}")
         
         # Split by sentences
@@ -510,8 +532,10 @@ Please synthesize this information into a coherent and informative, yet succinct
             return f"Task: {task}. Based on analysis: {'; '.join(insights[:3])}"
 
     def _search_buffers(self, query: str) -> List[Tuple[str, float, str]]:
-        """Search memory buffers for relevant content."""
-        # TODO: introduce for buffer search upon task processing
+        """
+        Search memory buffers for relevant content.
+        TODO: introduce for buffer search upon task processing
+        """
         results = []
         query_words = set(query.lower().split())
 
@@ -534,13 +558,13 @@ Please synthesize this information into a coherent and informative, yet succinct
 
     def _consolidate_memory(self):
         """
-        Memory consolidation and organization.
-        
-        Implements controlled memory management through:
-        1. Temporal decay (Ebbinghaus forgetting curve)
-        2. Selective consolidation to episodic memory
-        3. Attention threshold filtering
-        4. Semantic clustering organization
+        TODO:
+        Spaced repetition effects (optimal review intervals)
+        Interference-based forgetting (similar memories compete)
+        Context-dependent decay rates (emotional/important memories persist)
+        Emotional weighting (important memories prioritized)
+        Schema integration (new memories fit existing knowledge structures)
+        Memory reconsolidation (retrieved memories become labile again)
         """
         logger.debug("Starting memory consolidation")
         self.current_time += 1
@@ -572,7 +596,14 @@ Please synthesize this information into a coherent and informative, yet succinct
         logger.debug(f"Memory consolidation complete: removed {removed_count}, promoted {promoted_count}, {cluster_count} clusters")
 
     def _organize_semantic_clusters(self) -> int:
-        """Organize memories into semantic clusters using batch similarity computation."""
+        """
+        TODO:
+        Functional semantic networks (concepts linked by meaning)
+        Hierarchical knowledge organization (categories and subcategories)
+        Cross-domain associations (analogical reasoning)
+        Schema-based memory organization (structured knowledge frameworks)
+        Spreading activation (related concepts auto-activated)
+        """
         if len(self.episodic_buffer) < 2:
             return 0
         
@@ -617,7 +648,14 @@ Please synthesize this information into a coherent and informative, yet succinct
         return len(clusters)
 
     def _check_task_memory(self, task: str) -> List[MemoryItem]:
-        """Check if this exact task has been processed before."""
+        """
+        TODO:
+        Knowledge reuse (limited to documents, not insights)
+        Schema refinement (knowledge structures improve over time)
+        Transfer learning (knowledge applies to new domains)
+        Expertise development (domain-specific memory advantages)
+        Insight persistence (AI-generated knowledge survives sessions)
+        """
         # Search ChromaDB for content related to this specific task
         if self.vector_store:
             results = self.vector_store.search(task, top_k=5)
