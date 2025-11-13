@@ -104,7 +104,7 @@ class TestCognitiveMemorySystem(unittest.TestCase):
             system.immediate_buffer.append(MemoryItem(content=f"content {i}", embedding=np.array([0.1*i, 0.2*i, 0.3*i])))
             
         initial_immediate_count = len(system.immediate_buffer)
-        system._consolidate_memory()
+        system._consolidate_buffers()
         
         # Items should be moved to working buffer
         self.assertLessEqual(len(system.immediate_buffer), initial_immediate_count)

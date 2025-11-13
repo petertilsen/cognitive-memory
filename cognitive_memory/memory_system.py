@@ -1,11 +1,12 @@
-"""Core cognitive memory system implementation."""
+"""Optimized cognitive memory system implementation."""
 
 import os
 import time
-import itertools
 from collections import deque
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any
+from dataclasses import dataclass
 import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
 from strands.models import BedrockModel
 from strands import Agent
@@ -17,712 +18,247 @@ logger = get_logger("core.memory_system")
 config = load_config()
 
 
+@dataclass
+class MemoryStatus:
+    """Memory system status snapshot."""
+    working_items: int
+    episodic_items: int
+    vector_items: int
+    confidence: float
+    gaps: List[str]
+
+
 class CognitiveMemorySystem:
-    """Multi-layered cognitive memory system with vector search and ReAct integration."""
+    """Cognitive memory system with working memory, episodic storage, and vector persistence."""
     
     def __init__(self, 
                  embedding_model_id: str = "amazon.titan-embed-text-v1", 
-                 synthesis_model_id: str = "anthropic.claude-3-haiku-20240307-v1:0",
-                 region: str = "us-east-1"):
-        logger.info(f"Initializing CognitiveMemorySystem with embedding_model: {embedding_model_id}, synthesis_model: {synthesis_model_id}")
-
-        # Create internal models
+                 synthesis_model_id: str = "anthropic.claude-3-haiku-20240307-v1:0"):
+        """Initialize cognitive memory system with embedding and synthesis models."""
         self.embedding_model = BedrockModel(model_id=embedding_model_id, max_tokens=config.model.max_tokens)
         self.synthesis_model = BedrockModel(model_id=synthesis_model_id, max_tokens=config.model.max_tokens)
-        
-        # Create internal synthesis agent
         self._synthesis_agent = Agent(model=self.synthesis_model)
-
-        # Layered memory buffers
-        self.immediate_buffer = deque(maxlen=8)
+        
         self.working_buffer = deque(maxlen=64)
         self.episodic_buffer = deque(maxlen=256)
         
-        # Vector storage with ChromaDB
-        try:
-            chroma_host = os.getenv("CHROMA_HOST", "localhost")
-            chroma_port = int(os.getenv("CHROMA_PORT", "8000"))
-            collection_name = os.getenv("CHROMA_COLLECTION", "cognitive_memory")
-            
-            self.vector_store = VectorStore(
-                embedding_model=self.embedding_model,
-                chroma_host=chroma_host,
-                chroma_port=chroma_port,
-                collection_name=collection_name
-            )
-            logger.info(f"ChromaDB vector store initialized: {chroma_host}:{chroma_port}")
-        except Exception as e:
-            logger.error(f"Failed to initialize ChromaDB vector store: {e}")
-            raise
+        self.vector_store = VectorStore(
+            embedding_model=self.embedding_model,
+            chroma_host=os.getenv("CHROMA_HOST", "localhost"),
+            chroma_port=int(os.getenv("CHROMA_PORT", "8000")),
+            collection_name=os.getenv("CHROMA_COLLECTION", "cognitive_memory")
+        )
         
-        # Cognitive state tracking
-        self.cognitive_state: Optional[CognitiveState] = None
-        self.current_time = 0
-        
-        # Operation logging for reuse analysis
-        self.operation_logs = []
-        
-        # Memory management parameters
-        self.attention_threshold = 0.5
+        self.attention_threshold = 0.7
         self.consolidation_threshold = 0.3
-        self.similarity_threshold = 0.7
-
-        logger.debug("CognitiveMemorySystem initialization complete")
+        self.current_time = 0
+        self.operation_logs = []
+        self.cognitive_state = None
 
     def process_task(self, task: str, documents: List[str] = None) -> Dict[str, Any]:
-        """
-        Main entry point for cognitive memory processing.
+        """Process task using memory reuse and document analysis. Returns result dictionary for compatibility."""
+        if existing := self._check_task_reuse(task):
+            return {
+                'final_synthesis': existing,
+                'metacognitive_status': {'confidence_score': 0.9}
+            }
+            
+        if not documents:
+            return {
+                'final_synthesis': "No documents provided for processing.",
+                'metacognitive_status': {'confidence_score': 0.1}
+            }
         
-        Orchestrates the complete cognitive workspace workflow:
-        1. Task understanding and planning
-        2. Active information preparation  
-        3. Progressive reasoning with memory reuse
-        4. Synthesis and result generation
-        """
-        logger.info(f"Processing task: {task[:100]}...")
-        start_time = time.time()
-        
-        # Check if this exact task has been processed before
-        existing_task_knowledge = self._check_task_memory(task)
-        if existing_task_knowledge:
-            logger.info(f"Reusing existing knowledge for task: {task[:50]}...")
-            return self._reuse_task_knowledge(task, existing_task_knowledge, start_time)
-        if not existing_task_knowledge and not documents:
-            return {}
-        
-        # Phase 1: Task understanding and planning
+        self._index_documents(task, documents)
         subtasks = self._decompose_task(task)
+        insights = [self._process_subtask(subtask) for subtask in subtasks]
         
-        # Initialize cognitive state
-        self.cognitive_state = CognitiveState(
-            current_task=task,
-            subtasks=subtasks,
-            completed_subtasks=[],
-            information_gaps=[],
-            working_hypothesis="",
-            confidence_score=0.0,
-        )
-        
-        # Phase 2: Active information preparation
-        preparation_result = {}
-        if documents:
-            preparation_result = self._prepare_information_actively(task, documents)
-        
-        # Phase 3: Progressive reasoning
-        insights = {}
-        if preparation_result:
-            insights = self._process_subtasks_progressively(subtasks)
-        
-        # Phase 4: Metacognitive assessment
-        metacognitive_status = self.get_metacognitive_status()
-        
-        # Phase 5: Final synthesis
-        final_synthesis = self._synthesize_final_result(task, insights)
-        
-        elapsed_time = time.time() - start_time
-        
-        result = {
-            "task": task,
-            "subtasks": subtasks,
-            "insights": insights,
-            "final_synthesis": final_synthesis,
-            "preparation_result": preparation_result,
-            "metacognitive_status": metacognitive_status,
-            "processing_time": elapsed_time,
-            "memory_state": {
-                "immediate_buffer_size": len(self.immediate_buffer),
-                "working_buffer_size": len(self.working_buffer),
-                "episodic_buffer_size": len(self.episodic_buffer),
-                "vector_store_size": len(self.vector_store.vectors)
-            }
-        }
-        
-        logger.info(f"Task processing complete in {elapsed_time:.2f}s")
-        return result
+        synthesis = self._synthesize(insights, f"Task: {task}")
+        status = self.get_memory_status()
 
-    def get_metacognitive_status(self) -> Dict[str, Any]:
-        """
-        TODO:
-        Memory strategy selection (choosing optimal retrieval methods)
-        Metamemory accuracy (reliable confidence calibration)
-        Adaptive behavior based on metacognitive state
-
-        """
-        if not self.cognitive_state:
-            return {"error": "No active cognitive state"}
-        
-        information_gaps = self._assess_information_gaps(
-            self.cognitive_state.current_task, 
-            self.cognitive_state.completed_subtasks
-        )
-        
-        confidence = self._evaluate_confidence()
-        
         return {
-            "current_task": self.cognitive_state.current_task,
-            "progress": {
-                "total_subtasks": len(self.cognitive_state.subtasks),
-                "completed_subtasks": len(self.cognitive_state.completed_subtasks),
-                "completion_ratio": len(self.cognitive_state.completed_subtasks) / max(1, len(self.cognitive_state.subtasks))
-            },
-            "information_gaps": information_gaps,
-            "working_hypothesis": self.cognitive_state.working_hypothesis,
-            "confidence_score": confidence,
-            "memory_utilization": {
-                "immediate_buffer": len(self.immediate_buffer),
-                "working_buffer": len(self.working_buffer),
-                "episodic_buffer": len(self.episodic_buffer),
-                "vector_store": len(self.vector_store.vectors)
+            'final_synthesis': synthesis,
+            'metacognitive_status': {
+                'confidence_score': status.confidence,
+                'information_gaps': status.gaps
             }
         }
+
+    def get_memory_status(self) -> MemoryStatus:
+        """Get current memory system status including buffer sizes and confidence."""
+        return MemoryStatus(
+            working_items=len(self.working_buffer),
+            episodic_items=len(self.episodic_buffer),
+            vector_items=self.vector_store.count(),
+            confidence=self._calculate_confidence(),
+            gaps=self._detect_gaps()
+        )
+
+    def _check_task_reuse(self, task: str) -> Optional[str]:
+        """Check memory buffers first, then vector store for task reuse."""
+        if memory_items := self._search_memory_buffers(task):
+            self.operation_logs.append({"type": "task_memory_reuse", "items": len(memory_items)})
+            return self._synthesize([item.content for item in memory_items], task)
+        
+        if memory_items := self.vector_store.search(task, top_k=3):
+            self.operation_logs.append({"type": "task_vector_reuse", "items": len(memory_items)})
+            content = []
+            for item in memory_items:
+                if item[1] > 0.85:
+                    content.append(item[2])
+                    self._add_to_working_memory(item[2], task)
+            return self._synthesize(content, task)
+        return None
+
+    def _index_documents(self, task: str, documents: List[str]) -> None:
+        """Chunk and index documents into vector store for retrieval."""
+        for doc in documents:
+            chunks = self._chunk_document(doc)
+            for chunk in chunks:
+                if len(chunk.strip()) > 50:
+                    self.vector_store.add(chunk, {"task": task, "source": "document"})
+
+    def _chunk_document(self, document: str) -> List[str]:
+        """Split document into semantic chunks respecting sentence boundaries."""
+        sentences = [s.strip() + "." for s in document.split(".") if s.strip()]
+        chunks = []
+        current_chunk = ""
+        
+        for sentence in sentences:
+            if len(current_chunk) + len(sentence) < 300:
+                current_chunk += " " + sentence
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                current_chunk = sentence
+        
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+            
+        return chunks
 
     def _decompose_task(self, task: str) -> List[str]:
-        """Decompose task into subtasks using internal synthesis agent."""
-        logger.debug(f"Decomposing task: {task[:50]}...")
-        
-        decomposition_prompt = f"""
-        Decompose this task into subtasks. You must not produce more than 5 items:
-        Task: {task}
-        Output format: List of subtasks
-        """
+        """Break down complex task into manageable subtasks using LLM."""
         try:
-            subtasks_response = str(self._synthesis_agent(decomposition_prompt))
-            return self._parse_subtasks(subtasks_response)
-        except Exception as e:
-            logger.error(f"Task decomposition failed: {e}")
+            response = str(self._synthesis_agent(f"Break down this task into subtasks. You must not create more than 3 categories with no more than 2 items: {task}"))
+            subtasks = [line.strip().lstrip("0123456789.-) ") 
+                       for line in response.split("\n") 
+                       if line.strip() and (line.strip()[0].isdigit() or line.strip().startswith("-"))]
+            return subtasks if subtasks else ["Analyze", "Process", "Synthesize"]
+        except Exception:
             return ["Analyze", "Process", "Synthesize"]
 
-    def _parse_subtasks(self, response: str) -> List[str]:
-        """Parse subtasks from LLM response."""
-        lines = response.strip().split("\n")
-        subtasks = []
-        for line in lines:
-            line = line.strip()
-            if line and (line[0].isdigit() or line.startswith("-")):
-                task = line.lstrip("0123456789.-) ").strip()
-                if task:
-                    subtasks.append(task)
-        return subtasks if subtasks else ["Analyze", "Process", "Synthesize"]
+    def _process_subtask(self, subtask: str) -> str:
+        """Process individual subtask using memory reuse or vector retrieval."""
+        return self._check_task_reuse(subtask)
 
-    def _predict_information_needs(self, task: str) -> str:
-        """Predict what information will be needed for a task."""
-        logger.debug(f"Predicting information needs for task: {task[:50]}...")
-        
-        prediction_prompt = f"""
-        Task: {task}
-        Predict what information will be needed:
-        """
-        try:
-            return str(self._synthesis_agent(prediction_prompt))
-        except Exception as e:
-            logger.error(f"Information needs prediction failed: {e}")
-            return "Will need: definitions, examples, applications, limitations"
+    def _search_memory_buffers(self, query: str) -> List[MemoryItem]:
+        """Search working and episodic memory buffers for relevant items using cosine similarity."""
+        self._consolidate_buffers()
 
-    def _assess_relevance(self, content: str, predicted_needs: str) -> float:
-        """Assess content relevance against predicted needs."""
-        if not predicted_needs:
-            return 0.5
-
-        keywords = predicted_needs.lower().split()
-        content_lower = content.lower()
-
-        matches = sum(1 for keyword in keywords if keyword in content_lower)
-        relevance = min(1.0, matches / (len(keywords) + 1))
-
-        return relevance
-
-    def _process_subtasks_progressively(self, subtasks: List[str]) -> List[str]:
-        """Process subtasks with progressive reasoning and memory reuse."""
-        logger.debug(f"Processing {len(subtasks)} subtasks progressively")
-        
-        insights = []
-        for subtask in subtasks:
-            # Check if relevant information already exists in working memory
-            existing_knowledge = self._check_working_memory(subtask)
-
-            if existing_knowledge:
-                logger.debug(f"Reusing existing knowledge: {len(existing_knowledge)} items")
-                insight = self._synthesize_from_memory(existing_knowledge)
-                # Log reuse operation
-                self.operation_logs.append({"type": "memory_reuse", "subtask": subtask, "items_count": len(existing_knowledge)})
-            else:
-                logger.debug(f"Active retrieval for: {subtask}")
-                new_info = self._active_retrieval(subtask)
-                insight = self._process_new_information(new_info)
-                # Log new information processing
-                self.operation_logs.append({"type": "new_info_processing", "subtask": subtask, "items_count": len(new_info)})
-
-            insights.append(insight)
-            
-            # Update cognitive state if available
-            if self.cognitive_state:
-                self.cognitive_state.completed_subtasks.append(subtask)
-                self.cognitive_state.confidence_score = len(self.cognitive_state.completed_subtasks) / len(subtasks)
-
-            # Add insights to working memory
-            self._update_working_buffer(insight, subtask)
-
-            # Consolidate memory after each subtask
-            self._consolidate_memory()
-
-        return insights
-
-    def _check_working_memory(self, query: str) -> List[MemoryItem]:
-        """
-        TODO:
-        Context-dependent retrieval cues (environmental triggers)
-        Priming effects (recent activation influences retrieval)
-        Inhibition of competing memories (winner-take-all dynamics)
-        Reconstructive retrieval (memories rebuilt, not replayed)
-        Tip-of-tongue phenomena (partial retrieval states)
-        False memory generation (plausible but incorrect recalls)
-        """
-        if not self.vector_store:
+        if not self.working_buffer and not self.episodic_buffer:
             return []
-        
+
         query_embedding = self.vector_store.embed(query)
         relevant_items = []
+        all_items = list(self.working_buffer) + list(self.episodic_buffer)
         
-        # Check items in memory buffers using vector distance
-        all_buffers = itertools.chain(
-            self.working_buffer,
-            self.immediate_buffer,
-            self.episodic_buffer
-        )
-        
-        for item in all_buffers:
-            if hasattr(item.embedding, 'size') and item.embedding.size > 0:  # Skip items without embeddings
-                # Calculate cosine distance (1.0 - cosine_similarity)
-                query_norm = np.linalg.norm(query_embedding)
-                item_norm = np.linalg.norm(item.embedding)
+        for item in all_items:
+            if hasattr(item, 'embedding') and len(item.embedding) > 0:
+                similarity = cosine_similarity([query_embedding], [item.embedding])[0][0]
                 
-                if query_norm > 0 and item_norm > 0:
-                    cosine_similarity = np.dot(query_embedding, item.embedding) / (query_norm * item_norm)
-                    distance = 1.0 - cosine_similarity
-                else:
-                    distance = 1.0  # Maximum distance for zero vectors
-                
-                similarity = 1.0 - distance  # Convert to similarity
-                if similarity > 0.7 and len(item.content) > 100:  # Higher similarity = better match
+                if similarity > self.attention_threshold and len(item.content) > 50:
                     item.boost()
                     relevant_items.append(item)
         
         return relevant_items
 
-    def _synthesize_from_memory(self, memory_items: List[MemoryItem]) -> str:
-        """Synthesize information from memory using internal synthesis agent."""
-        if not memory_items:
-            return "No relevant information found in memory"
-        
-        # Extract content from memory items
-        contents = [item.content for item in memory_items[:5]]  # Use more items and full content
-        combined_content = "\n\n".join(contents)
-        
-        synthesis_prompt = f"""Based on the following information from memory, provide a comprehensive synthesis:
-
-{combined_content}
-
-Please synthesize this information into a coherent and informative, yet succinct response."""
-        
-        try:
-            return str(self._synthesis_agent(synthesis_prompt))
-        except Exception as e:
-            logger.error(f"Memory synthesis failed: {e}")
-            return f"Memory synthesis: {combined_content[:200]}..."
-
-    def _active_retrieval(self, subtask: str) -> List[str]:
-        """Active retrieval (predictive rather than reactive)."""
-        if self.vector_store:
-            results = self.vector_store.search(subtask, top_k=3)
-            return [document for _, _, document, _ in results]  # Extract document from (doc_id, similarity, document, metadata)
-        return []
-
-    def _process_new_information(self, info: List[str]) -> str:
-        """Process new information using internal synthesis agent."""
-        if not info:
-            return "No new information found"
-        
-        # Combine multiple pieces of information
-        combined_info = " | ".join(info[:3])  # Use top 3 results
-        
-        prompt = f"""
-        Analyze this information and extract key insights:
-        {combined_info}
-        
-        Provide a concise analysis focusing on the main points:
-        """
-        try:
-            return str(self._synthesis_agent(prompt))
-        except Exception as e:
-            logger.error(f"New information processing failed: {e}")
-            return f"Retrieved: {info[0][:200]}..." if info else "No information"
-
-    def _update_working_buffer(self, content: str, source: str = "generation"):
-        """Update working memory buffer."""
-        # Avoid adding duplicate content
+    def _add_to_working_memory(self, content: str, source: str) -> None:
+        """Add new content to working memory, avoiding duplicates."""
         for item in self.working_buffer:
             if item.content == content:
                 item.boost()
                 return
-
+        
         memory_item = MemoryItem(
             content=content,
-            embedding=self.vector_store.embed(content) if self.vector_store else np.zeros(384),
+            embedding=self.vector_store.embed(content),
             creation_time=self.current_time,
             last_access_time=self.current_time,
-            task_context=self.cognitive_state.current_task if self.cognitive_state else "",
-            source=source,
+            task_context=source,
+            source="generated"
         )
-
+        
         self.working_buffer.append(memory_item)
-        self.immediate_buffer.append(memory_item)
 
-    def _intelligent_chunking(self, document: str) -> List[str]:
-        """
-        Not intelligent. Naive splitting.
-        TODO:
-        Topic modeling** - Group sentences by semantic similarity
-        Paragraph boundaries** - Respect document structure
-        Named entity recognition** - Keep related entities together
-        Embedding-based clustering** - Group semantically similar content
-        Sliding window overlap** - Preserve context across chunks
-        """
-        logger.debug(f"Chunking document of length: {len(document)}")
+    def _consolidate_buffers(self) -> None:
+        """Apply forgetting curve, remove low-relevance items, promote important memories."""
+        self.current_time += 1
         
-        # Split by sentences
-        sentences = document.split(".")
-        chunks = []
-        current_chunk = ""
-
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-
-            if len(current_chunk) + len(sentence) < 200:
-                current_chunk += sentence + ". "
-            else:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                current_chunk = sentence + ". "
-
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-
-        logger.debug(f"Document chunked into {len(chunks)} semantic chunks")
-        return chunks
-
-    def _prepare_information_actively(self, task: str, documents: List[str]) -> Dict[str, Any]:
-        """Actively prepare information based on predicted needs."""
-        logger.info(f"Actively preparing information for task: {task[:50]}...")
+        for item in list(self.working_buffer) + list(self.episodic_buffer):
+            item.decay(self.current_time)
         
-        # Predict needed information types
-        predicted_needs = self._predict_information_needs(task)
-        
-        prepared_chunks = 0
-        promoted_chunks = 0
-        
-        # Actively index and organize documents
-        if self.vector_store and documents:
-            for doc in documents:
-                # Intelligent chunking
-                chunks = self._intelligent_chunking(doc)
-                for chunk in chunks:
-                    # Add to vector store
-                    idx = self.vector_store.add(
-                        chunk, {"source": "document", "task": task}
-                    )
-                    prepared_chunks += 1
-
-                    # Assess relevance and decide buffer level
-                    relevance = self._assess_relevance(chunk, predicted_needs)
-                    if relevance > self.consolidation_threshold:
-                        self._promote_to_working_memory(chunk, relevance)
-                        promoted_chunks += 1
-
-        result = {
-            "task": task,
-            "predicted_needs": predicted_needs,
-            "documents_processed": len(documents) if documents else 0,
-            "chunks_prepared": prepared_chunks,
-            "chunks_promoted": promoted_chunks,
-            "promotion_rate": promoted_chunks / prepared_chunks if prepared_chunks > 0 else 0
-        }
-        
-        logger.info(f"Information preparation complete: {prepared_chunks} chunks, {promoted_chunks} promoted")
-        return result
-
-    def _promote_to_working_memory(self, content: str, relevance: float):
-        """Promote content to working memory."""
-        memory_item = MemoryItem(
-            content=content,
-            embedding=self.vector_store.embed(content) if self.vector_store else np.zeros(384),
-            relevance_score=relevance,
-            creation_time=self.current_time,
-            last_access_time=self.current_time,
-            task_context=self.cognitive_state.current_task if self.cognitive_state else "",
-            source="promotion",
+        self.working_buffer = deque(
+            [item for item in self.working_buffer if item.relevance_score > 0.3],
+            maxlen=self.working_buffer.maxlen
         )
+        
+        for item in self.working_buffer:
+            if (item.access_count > 2 and 
+                not any(id(item) == id(e) for e in self.episodic_buffer)):
+                self.episodic_buffer.append(item)
 
-        self.working_buffer.append(memory_item)
-        self.immediate_buffer.append(memory_item)
+    def _synthesize(self, contents: List[str], context: str) -> str:
+        """Generate coherent synthesis from multiple content pieces using LLM."""
+        if not contents:
+            return ""
+        
+        combined = "\n\n".join(contents[:5])
+        
+        prompt = f"""Context: {context}
+        
+Information:
+{combined}
 
-    def _assess_information_gaps(self, task: str, completed_subtasks: List[str]) -> List[str]:
-        """Identify information gaps for metacognitive awareness."""
-        logger.debug(f"Assessing information gaps for task: {task[:50]}...")
+Provide a concise, informative synthesis:"""
         
-        information_gaps = []
-        
-        # Check if we have sufficient information for remaining subtasks
-        if self.cognitive_state:
-            remaining_subtasks = [
-                subtask for subtask in self.cognitive_state.subtasks 
-                if subtask not in completed_subtasks
-            ]
-            
-            for subtask in remaining_subtasks:
-                # Check working memory for relevant information
-                relevant_items = self._check_working_memory(subtask)
-                if len(relevant_items) < 2:  # Threshold for sufficient information
-                    information_gaps.append(f"Insufficient information for: {subtask}")
-        
-        # Check overall task coverage
-        if len(self.working_buffer) < 3:
-            information_gaps.append("Limited working memory content")
-        
-        if len(self.vector_store.vectors) < 5:
-            information_gaps.append("Insufficient knowledge base")
-        
-        logger.debug(f"Identified {len(information_gaps)} information gaps")
-        return information_gaps
+        try:
+            return str(self._synthesis_agent(prompt))
+        except Exception as e:
+            logger.error(f"Synthesis failed: {e}")
+            return f"Analysis of: {combined[:200]}..."
 
-    def _evaluate_confidence(self) -> float:
-        """Evaluate confidence based on available information and progress."""
-        if not self.cognitive_state:
+    def _calculate_confidence(self) -> float:
+        """Calculate confidence score based on memory relevance and utilization."""
+        if not self.working_buffer:
             return 0.0
         
-        # Base confidence on task completion
-        completion_ratio = len(self.cognitive_state.completed_subtasks) / max(1, len(self.cognitive_state.subtasks))
+        avg_relevance = np.mean([item.relevance_score for item in self.working_buffer])
+        buffer_utilization = len(self.working_buffer) / self.working_buffer.maxlen
         
-        # Adjust based on information availability
-        info_factor = min(1.0, len(self.working_buffer) / 10)  # More info = higher confidence
+        return min(1.0, (avg_relevance * 0.7 + buffer_utilization * 0.3))
+
+    def _detect_gaps(self) -> List[str]:
+        """Identify information gaps in current memory state."""
+        gaps = []
         
-        # Adjust based on information gaps
-        gaps = self._assess_information_gaps(self.cognitive_state.current_task, self.cognitive_state.completed_subtasks)
-        gap_penalty = len(gaps) * 0.1
+        if len(self.working_buffer) < 3:
+            gaps.append("Limited working memory")
         
-        confidence = (completion_ratio * 0.6 + info_factor * 0.4) - gap_penalty
-        confidence = max(0.0, min(1.0, confidence))
+        if self.vector_store.count() < 5:
+            gaps.append("Insufficient knowledge base")
         
-        self.cognitive_state.confidence_score = confidence
-        logger.debug(f"Confidence evaluated: {confidence:.2f}")
-        return confidence
+        return gaps
 
-    def _synthesize_final_result(self, task: str, insights: List[str]) -> str:
-        """Synthesize final result from task and insights."""
-        synthesis_prompt = f"""
-        Task: {task}
-        Key insights: {insights}
-        Synthesize a comprehensive answer:
-        """
-        try:
-            return str(self._synthesis_agent(synthesis_prompt))
-        except Exception as e:
-            logger.error(f"Final synthesis failed: {e}")
-            return f"Task: {task}. Based on analysis: {'; '.join(insights[:3])}"
-
-    def _search_buffers(self, query: str) -> List[Tuple[str, float, str]]:
-        """
-        Search memory buffers for relevant content.
-        TODO: introduce for buffer search upon task processing
-        """
-        results = []
-        query_words = set(query.lower().split())
-
-        # Search all buffers
-        all_buffers = [
-            ("immediate", self.immediate_buffer),
-            ("working", self.working_buffer),
-            ("episodic", self.episodic_buffer)
-        ]
-
-        for buffer_name, buffer in all_buffers:
-            for item in buffer:
-                content_words = set(item.content.lower().split())
-                overlap = len(query_words & content_words)
-                if overlap > 0:
-                    relevance = overlap / len(query_words)
-                    results.append((buffer_name, relevance, item.content))
-
-        return results
-
-    def _consolidate_memory(self):
-        """
-        TODO:
-        Spaced repetition effects (optimal review intervals)
-        Interference-based forgetting (similar memories compete)
-        Context-dependent decay rates (emotional/important memories persist)
-        Emotional weighting (important memories prioritized)
-        Schema integration (new memories fit existing knowledge structures)
-        Memory reconsolidation (retrieved memories become labile again)
-        """
-        logger.debug("Starting memory consolidation")
-        self.current_time += 1
-
-        # Apply forgetting curve to all buffers
-        for buffer in [self.immediate_buffer, self.working_buffer, self.episodic_buffer]:
-            for item in buffer:
-                item.decay(self.current_time)
-
-        # Remove low relevance items from working buffer
-        original_size = len(self.working_buffer)
-        self.working_buffer = deque(
-            [item for item in self.working_buffer if item.relevance_score > self.attention_threshold],
-            maxlen=self.working_buffer.maxlen,
-        )
-        removed_count = original_size - len(self.working_buffer)
-
-        # Promote important items to episodic memory
-        promoted_count = 0
-        for item in self.working_buffer:
-            if item.access_count > 2 and not any(id(item) == id(e) for e in self.episodic_buffer):
-                self.episodic_buffer.append(item)
-                promoted_count += 1
-
-        # Organize semantic clusters
-        # TODO: Store and use clusters for retrieval optimization
-        cluster_count = self._organize_semantic_clusters()
-
-        logger.debug(f"Memory consolidation complete: removed {removed_count}, promoted {promoted_count}, {cluster_count} clusters")
-
-    def _organize_semantic_clusters(self) -> int:
-        """
-        TODO:
-        Functional semantic networks (concepts linked by meaning)
-        Hierarchical knowledge organization (categories and subcategories)
-        Cross-domain associations (analogical reasoning)
-        Schema-based memory organization (structured knowledge frameworks)
-        Spreading activation (related concepts auto-activated)
-        """
-        if len(self.episodic_buffer) < 2:
-            return 0
-        
-        clusters = {}
-        cluster_count = 0
-        
-        # Extract all embeddings at once for batch processing
-        items = list(self.episodic_buffer)
-        embeddings = np.array([item.embedding for item in items])
-        
-        for i, item in enumerate(items):
-            assigned = False
-            
-            # Batch compute similarities against all existing cluster centroids
-            if clusters:
-                cluster_centroids = []
-                cluster_keys = []
-                
-                for cluster_key, cluster_items in clusters.items():
-                    if cluster_items:
-                        cluster_centroids.append(cluster_items[0].embedding)
-                        cluster_keys.append(cluster_key)
-                
-                if cluster_centroids:
-                    # Vectorized distance computation (1.0 - cosine_similarity)
-                    centroids_array = np.array(cluster_centroids)
-                    cosine_similarities = np.dot(centroids_array, embeddings[i]) / (
-                        np.linalg.norm(centroids_array, axis=1) * np.linalg.norm(embeddings[i])
-                    )
-                    distances = 1.0 - cosine_similarities
-                    
-                    # Find best matching cluster (highest similarity)
-                    best_idx = np.argmax(cosine_similarities)
-                    if cosine_similarities[best_idx] > 0.8:  # Higher similarity = better match
-                        clusters[cluster_keys[best_idx]].append(item)
-                        assigned = True
-            
-            if not assigned:
-                clusters[f"cluster_{cluster_count}"] = [item]
-                cluster_count += 1
-        
-        return len(clusters)
-
-    def _check_task_memory(self, task: str) -> List[MemoryItem]:
-        """
-        TODO:
-        Knowledge reuse (limited to documents, not insights)
-        Schema refinement (knowledge structures improve over time)
-        Transfer learning (knowledge applies to new domains)
-        Expertise development (domain-specific memory advantages)
-        Insight persistence (AI-generated knowledge survives sessions)
-        """
-        # Search ChromaDB for content related to this specific task
-        if self.vector_store:
-            results = self.vector_store.search(task, top_k=5)
-            # Convert search results to MemoryItem objects
-            memory_items = []
-            for doc_id, similarity, document, metadata in results:
-                logger.debug(f"Task memory check: similarity={similarity:.3f} for query='{task[:50]}'")
-                if similarity > 0.80:  # Optimal threshold for progressive reuse
-                    memory_item = MemoryItem(
-                        content=document,
-                        embedding=np.array([]),  # Empty embedding for reuse
-                        relevance_score=similarity,  # Use similarity directly as relevance score
-                        access_count=1,
-                        task_context=task,
-                        source="chromadb_reuse"
-                    )
-                    memory_items.append(memory_item)
-            return memory_items
-        return []
-
-    def _reuse_task_knowledge(self, task: str, existing_knowledge: List[MemoryItem], start_time: float) -> Dict[str, Any]:
-        """Reuse existing knowledge for a previously processed task."""
-        # Synthesize the existing knowledge into a comprehensive response
-        if existing_knowledge:
-            synthesis = self._synthesize_from_memory(existing_knowledge)
-            insights = [synthesis]
-            
-            # Log the reuse operation
-            self.operation_logs.append({
-                "type": "task_reuse", 
-                "task": task, 
-                "items_count": len(existing_knowledge)
-            })
-        else:
-            synthesis = f"Previously processed task: {task}"
-            insights = [synthesis]
-        
-        elapsed_time = time.time() - start_time
-        
+    def get_metacognitive_status(self) -> Dict[str, Any]:
+        """Legacy method returning memory status as dictionary for backward compatibility."""
+        status = self.get_memory_status()
         return {
-            "task": task,
-            "subtasks": ["Task Reuse"],
-            "insights": insights,
-            "final_synthesis": synthesis,
-            "preparation_result": {},
-            "metacognitive_status": {
-                "current_task": task,
-                "progress": {
-                    "total_subtasks": 1,
-                    "completed_subtasks": 1,
-                    "completion_ratio": 1.0
-                },
-                "information_gaps": [],
-                "working_hypothesis": "Reusing existing knowledge",
-                "confidence_score": 0.9,  # High confidence for reuse
-                "memory_utilization": {
-                    "immediate_buffer": len(self.immediate_buffer),
-                    "working_buffer": len(self.working_buffer),
-                    "episodic_buffer": len(self.episodic_buffer),
-                    "vector_store": len(self.vector_store.vectors) if self.vector_store else 0
-                }
-            },
-            "processing_time": elapsed_time,
-            "memory_state": {
-                "immediate_buffer_size": len(self.immediate_buffer),
-                "working_buffer_size": len(self.working_buffer),
-                "episodic_buffer_size": len(self.episodic_buffer),
-                "vector_store_size": len(self.vector_store.vectors) if self.vector_store else 0
+            "confidence_score": status.confidence,
+            "information_gaps": status.gaps,
+            "memory_utilization": {
+                "working_buffer": status.working_items,
+                "episodic_buffer": status.episodic_items,
+                "vector_store": status.vector_items
             }
         }
