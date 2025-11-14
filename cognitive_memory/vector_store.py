@@ -114,7 +114,7 @@ class VectorStore:
                     metadata = results["metadatas"][0][i] or {}
                     search_results.append((doc_id, similarity, document, metadata))
             
-            logger.debug(f"Search found {len(search_results)} results")
+            logger.debug(f"{len(search_results)} vector search results meet threshold criteria: {threshold}")
             return search_results
             
         except Exception as e:

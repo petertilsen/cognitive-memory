@@ -33,11 +33,13 @@ class CognitiveMemorySystem:
     
     def __init__(self, 
                  embedding_model_id: str = "amazon.titan-embed-text-v1", 
-                 synthesis_model_id: str = "anthropic.claude-3-haiku-20240307-v1:0"):
+                 synthesis_model_id: str = "anthropic.claude-3-haiku-20240307-v1:0",
+                 event_handler=None):
         """Initialize cognitive memory system with embedding and synthesis models."""
         self.embedding_model = BedrockModel(model_id=embedding_model_id, max_tokens=config.model.max_tokens)
         self.synthesis_model = BedrockModel(model_id=synthesis_model_id, max_tokens=config.model.max_tokens)
         self._synthesis_agent = Agent(model=self.synthesis_model)
+        self._event_handler = event_handler
         
         self.working_buffer = deque(maxlen=64)
         self.episodic_buffer = deque(maxlen=256)
@@ -49,11 +51,14 @@ class CognitiveMemorySystem:
             collection_name=os.getenv("CHROMA_COLLECTION", "cognitive_memory")
         )
         
-        self.attention_threshold = 0.7
-        self.consolidation_threshold = 0.3
+        self.attention_threshold =  config.memory.attention_threshold
+        self.consolidation_threshold = config.memory.consolidation_threshold
         self.current_time = 0
-        self.operation_logs = []
-        self.cognitive_state = None
+
+    def _emit_event(self, event: str, data: Dict[str, Any] = None) -> None:
+        """Emit event to handler if present."""
+        if self._event_handler:
+            self._event_handler(event, data or {})
 
     def process_task(self, task: str, documents: List[str] = None) -> Dict[str, Any]:
         """Process task using memory reuse and document analysis. Returns result dictionary for compatibility."""
@@ -71,7 +76,7 @@ class CognitiveMemorySystem:
         
         self._index_documents(task, documents)
         subtasks = self._decompose_task(task)
-        insights = [self._process_subtask(subtask) for subtask in subtasks]
+        insights = list(filter(None, map(self._process_subtask, subtasks)))
         
         synthesis = self._synthesize(insights, f"Task: {task}")
         status = self.get_memory_status()
@@ -97,16 +102,15 @@ class CognitiveMemorySystem:
     def _check_task_reuse(self, task: str) -> Optional[str]:
         """Check memory buffers first, then vector store for task reuse."""
         if memory_items := self._search_memory_buffers(task):
-            self.operation_logs.append({"type": "task_memory_reuse", "items": len(memory_items)})
+            self._emit_event("memory_reuse", {"type": "buffer", "items": len(memory_items)})
             return self._synthesize([item.content for item in memory_items], task)
         
         if memory_items := self.vector_store.search(task, top_k=3):
-            self.operation_logs.append({"type": "task_vector_reuse", "items": len(memory_items)})
+            self._emit_event("memory_reuse", {"type": "vector", "items": len(memory_items)})
             content = []
             for item in memory_items:
-                if item[1] > 0.85:
-                    content.append(item[2])
-                    self._add_to_working_memory(item[2], task)
+                content.append(item[2])
+                self._add_to_working_memory(item[2], task)
             return self._synthesize(content, task)
         return None
 
@@ -117,6 +121,8 @@ class CognitiveMemorySystem:
             for chunk in chunks:
                 if len(chunk.strip()) > 50:
                     self.vector_store.add(chunk, {"task": task, "source": "document"})
+        
+        self._emit_event("document_indexing", {"documents": len(documents)})
 
     def _chunk_document(self, document: str) -> List[str]:
         """Split document into semantic chunks respecting sentence boundaries."""
@@ -148,7 +154,7 @@ class CognitiveMemorySystem:
         except Exception:
             return ["Analyze", "Process", "Synthesize"]
 
-    def _process_subtask(self, subtask: str) -> str:
+    def _process_subtask(self, subtask: str) -> Optional[str]:
         """Process individual subtask using memory reuse or vector retrieval."""
         return self._check_task_reuse(subtask)
 
@@ -180,7 +186,7 @@ class CognitiveMemorySystem:
                 item.boost()
                 return
         
-        memory_item = MemoryItem(
+        item = MemoryItem(
             content=content,
             embedding=self.vector_store.embed(content),
             creation_time=self.current_time,
@@ -188,12 +194,23 @@ class CognitiveMemorySystem:
             task_context=source,
             source="generated"
         )
-        
-        self.working_buffer.append(memory_item)
+        if not any(id(item) == id(e) for e in self.working_buffer):
+            self.working_buffer.append(item)
+            self._emit_event("memory_add", {"buffer": "working", "source": source})
+            logger.debug(f"Memory Item {item.content[:50]} added to working memory")
+
+    def _add_to_episodic_memory(self, item: MemoryItem) -> None:
+        """Add new content to episodic memory, avoiding duplicates."""
+        if not any(id(item) == id(e) for e in self.episodic_buffer):
+            self.episodic_buffer.append(item)
+            self._emit_event("memory_add", {"buffer": "episodic", "source": item.source})
+            logger.debug(f"Memory Item {item.content[:50]} added to episodic memory")
 
     def _consolidate_buffers(self) -> None:
         """Apply forgetting curve, remove low-relevance items, promote important memories."""
         self.current_time += 1
+        
+        initial_working = len(self.working_buffer)
         
         for item in list(self.working_buffer) + list(self.episodic_buffer):
             item.decay(self.current_time)
@@ -202,16 +219,20 @@ class CognitiveMemorySystem:
             [item for item in self.working_buffer if item.relevance_score > 0.3],
             maxlen=self.working_buffer.maxlen
         )
-        
-        for item in self.working_buffer:
-            if (item.access_count > 2 and 
-                not any(id(item) == id(e) for e in self.episodic_buffer)):
-                self.episodic_buffer.append(item)
 
-    def _synthesize(self, contents: List[str], context: str) -> str:
+        # TODO: implement sophisticated for episodic buffer promotion
+        for item in self.working_buffer:
+            if (item.access_count > 2):
+                self._add_to_episodic_memory(item)
+
+        self._emit_event("memory_consolidation", {
+            "working_removed": initial_working - len(self.working_buffer)
+        })
+
+    def _synthesize(self, contents: List[str], context: str) -> Optional[str]:
         """Generate coherent synthesis from multiple content pieces using LLM."""
         if not contents:
-            return ""
+            return None
         
         combined = "\n\n".join(contents[:5])
         

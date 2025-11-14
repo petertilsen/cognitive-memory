@@ -5,6 +5,8 @@ import os
 from typing import Dict, Any
 from dataclasses import dataclass, field
 
+from config.settings import MemoryConfig
+
 
 @dataclass
 class ModelConfig:
@@ -12,11 +14,17 @@ class ModelConfig:
     max_tokens: int = 1000
     temperature: float = 0.7
 
+@dataclass
+class MemoryConfig:
+    """Model configuration settings."""
+    attention_threshold: float = 0.7
+    consolidation_threshold: float = 0.3
 
 @dataclass
 class Config:
     """Main configuration class."""
     model: ModelConfig = field(default_factory=ModelConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -30,7 +38,7 @@ def get_logger(name: str) -> logging.Logger:
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-        logger.setLevel(logging.ERROR)
+        logger.setLevel(logging.DEBUG)
     
     return logger
 
@@ -41,5 +49,9 @@ def load_config() -> Config:
         model=ModelConfig(
             max_tokens=int(os.getenv("MAX_TOKENS", "1000")),
             temperature=float(os.getenv("TEMPERATURE", "0.7"))
+        ),
+        memory=MemoryConfig(
+            attention_threshold=float(os.getenv("ATTENTION_THRESHOLD", "0.7")),
+            consolidation_threshold=float(os.getenv("CONSOLIDATION_THRESHOLD", "0.3"))
         )
     )

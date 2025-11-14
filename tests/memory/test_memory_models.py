@@ -118,3 +118,21 @@ class TestCognitiveState(unittest.TestCase):
         # Test adding more gaps
         state.information_gaps.append("gap2")
         self.assertEqual(len(state.information_gaps), 2)
+        
+    def test_memory_item_decay_edge_cases(self):
+        """Test memory item decay edge cases."""
+        item = MemoryItem(
+            content="test content",
+            embedding=np.array([0.1, 0.2, 0.3]),
+            creation_time=10,
+            last_access_time=10,
+            relevance_score=0.8
+        )
+        
+        # Test no decay when current_time <= last_access_time
+        item.decay(current_time=5)  # current_time < last_access_time
+        self.assertEqual(item.relevance_score, 0.8)
+        
+        # Test extreme decay (overflow protection)
+        item.decay(current_time=1000)  # Very large time difference
+        self.assertLess(item.relevance_score, 0.001)  # Very close to 0

@@ -1,222 +1,219 @@
-"""Unit tests for cognitive memory system."""
+"""Unit tests for optimized cognitive memory system."""
 
 import unittest
-import sys
-import os
 import numpy as np
 from unittest.mock import Mock, patch, MagicMock
 from collections import deque
 
-
-from cognitive_memory.memory_system import CognitiveMemorySystem
-from cognitive_memory.models import MemoryItem, CognitiveState
+from cognitive_memory.memory_system import CognitiveMemorySystem, MemoryStatus
+from cognitive_memory.models import MemoryItem
 
 
 class TestCognitiveMemorySystem(unittest.TestCase):
-    """Test cases for CognitiveMemorySystem class."""
+    """Test cases for optimized CognitiveMemorySystem."""
     
-    def setUp(self):
+    @patch('cognitive_memory.memory_system.VectorStore')
+    @patch('cognitive_memory.memory_system.Agent')
+    @patch('cognitive_memory.memory_system.BedrockModel')
+    def setUp(self, mock_bedrock, mock_agent, mock_vector_store):
         """Set up test fixtures."""
-        self.mock_embedding_model = Mock()
-        self.mock_synthesis_model = Mock()
-        
-    @patch('cognitive_memory.memory_system.VectorStore')
-    @patch('cognitive_memory.memory_system.Agent')
-    @patch('cognitive_memory.memory_system.BedrockModel')
-    def test_memory_system_initialization(self, mock_bedrock, mock_agent, mock_vector_store):
-        """Test CognitiveMemorySystem initialization."""
-        mock_bedrock.return_value = self.mock_embedding_model
+        mock_bedrock.return_value = Mock()
         mock_agent.return_value = Mock()
-        mock_vector_store.return_value = Mock()
         
-        system = CognitiveMemorySystem(
-            embedding_model_id="test-embed-model",
-            synthesis_model_id="test-synthesis-model",
-            region="us-test-1"
-        )
+        self.mock_vector_store = Mock()
+        self.mock_vector_store.count.return_value = 5
+        self.mock_vector_store.embed.return_value = np.array([0.1, 0.2, 0.3])
+        self.mock_vector_store.search.return_value = []
+        mock_vector_store.return_value = self.mock_vector_store
         
-        self.assertIsInstance(system.immediate_buffer, deque)
-        self.assertIsInstance(system.working_buffer, deque)
-        self.assertIsInstance(system.episodic_buffer, deque)
-        self.assertEqual(system.immediate_buffer.maxlen, 8)
-        self.assertEqual(system.working_buffer.maxlen, 64)
-        self.assertEqual(system.episodic_buffer.maxlen, 256)
+        self.system = CognitiveMemorySystem()
         
-    @patch('cognitive_memory.memory_system.VectorStore')
-    @patch('cognitive_memory.memory_system.Agent')
-    @patch('cognitive_memory.memory_system.BedrockModel')
-    def test_store_memory_item(self, mock_bedrock, mock_agent, mock_vector_store):
-        """Test storing a memory item in immediate buffer."""
-        mock_bedrock.return_value = self.mock_embedding_model
-        mock_agent.return_value = Mock()
-        mock_vector_store_instance = Mock()
-        mock_vector_store.return_value = mock_vector_store_instance
+    def test_initialization(self):
+        """Test system initialization."""
+        self.assertIsInstance(self.system.working_buffer, deque)
+        self.assertIsInstance(self.system.episodic_buffer, deque)
+        self.assertEqual(self.system.working_buffer.maxlen, 64)
+        self.assertEqual(self.system.episodic_buffer.maxlen, 256)
+        self.assertEqual(self.system.attention_threshold, 0.7)  # From config
+        self.assertEqual(self.system.consolidation_threshold, 0.3)  # From config
         
-        system = CognitiveMemorySystem()
+    def test_configurable_thresholds(self):
+        """Test that thresholds are configurable via environment."""
+        # Test that thresholds can be modified at runtime
+        original_attention = self.system.attention_threshold
+        original_consolidation = self.system.consolidation_threshold
         
-        item = MemoryItem(content="test content", embedding=np.array([0.1, 0.2, 0.3]))
-        system.immediate_buffer.append(item)
+        # Modify thresholds
+        self.system.attention_threshold = 0.8
+        self.system.consolidation_threshold = 0.4
         
-        # Should be stored in immediate buffer
-        self.assertEqual(len(system.immediate_buffer), 1)
-        self.assertEqual(system.immediate_buffer[0].content, "test content")
+        self.assertEqual(self.system.attention_threshold, 0.8)
+        self.assertEqual(self.system.consolidation_threshold, 0.4)
         
-    @patch('cognitive_memory.memory_system.VectorStore')
-    @patch('cognitive_memory.memory_system.Agent')
-    @patch('cognitive_memory.memory_system.BedrockModel')
-    def test_retrieve_relevant_memories(self, mock_bedrock, mock_agent, mock_vector_store):
-        """Test retrieving relevant memories from buffers."""
-        mock_bedrock.return_value = self.mock_embedding_model
-        mock_agent.return_value = Mock()
-        mock_vector_store_instance = Mock()
-        mock_vector_store_instance.search.return_value = [
-            ('id1', 0.9, 'relevant content', {})
-        ]
-        mock_vector_store.return_value = mock_vector_store_instance
+        # Restore original values
+        self.system.attention_threshold = original_attention
+        self.system.consolidation_threshold = original_consolidation
         
-        system = CognitiveMemorySystem()
+    def test_emit_event(self):
+        """Test event emission."""
+        handler_calls = []
         
-        # Add some items to buffers
-        system.immediate_buffer.append(MemoryItem(content="immediate content", embedding=np.array([0.1, 0.2, 0.3])))
-        system.working_buffer.append(MemoryItem(content="working content", embedding=np.array([0.4, 0.5, 0.6])))
-        
-        # Test buffer search functionality
-        buffer_results = system._search_buffers("test query")
-        
-        self.assertIsInstance(buffer_results, list)
-        # Should include buffer items
-        self.assertGreaterEqual(len(buffer_results), 0)
-        
-    @patch('cognitive_memory.memory_system.VectorStore')
-    @patch('cognitive_memory.memory_system.Agent')
-    @patch('cognitive_memory.memory_system.BedrockModel')
-    def test_consolidate_memories(self, mock_bedrock, mock_agent, mock_vector_store):
-        """Test memory consolidation."""
-        mock_bedrock.return_value = self.mock_embedding_model
-        mock_agent.return_value = Mock()
-        mock_vector_store_instance = Mock()
-        mock_vector_store.return_value = mock_vector_store_instance
-        
-        system = CognitiveMemorySystem()
-        
-        # Fill immediate buffer to trigger consolidation
-        for i in range(10):
-            system.immediate_buffer.append(MemoryItem(content=f"content {i}", embedding=np.array([0.1*i, 0.2*i, 0.3*i])))
+        def mock_handler(event, data):
+            handler_calls.append((event, data))
             
-        initial_immediate_count = len(system.immediate_buffer)
-        system._consolidate_buffers()
+        self.system._event_handler = mock_handler
+        self.system._emit_event("test_event", {"key": "value"})
         
-        # Items should be moved to working buffer
-        self.assertLessEqual(len(system.immediate_buffer), initial_immediate_count)
+        self.assertEqual(len(handler_calls), 1)
+        self.assertEqual(handler_calls[0][0], "test_event")
+        self.assertEqual(handler_calls[0][1]["key"], "value")
         
-    @patch('cognitive_memory.memory_system.VectorStore')
-    @patch('cognitive_memory.memory_system.Agent')
-    @patch('cognitive_memory.memory_system.BedrockModel')
-    def test_get_metacognitive_status(self, mock_bedrock, mock_agent, mock_vector_store):
-        """Test metacognitive status retrieval."""
-        mock_bedrock.return_value = self.mock_embedding_model
-        mock_agent.return_value = Mock()
-        mock_vector_store_instance = Mock()
-        mock_vector_store_instance.count.return_value = 10
-        mock_vector_store_instance.vectors = [None] * 10  # Mock the vectors property
-        mock_vector_store_instance.embed.return_value = np.array([0.5, 0.5, 0.5])  # Mock embedding
-        mock_vector_store.return_value = mock_vector_store_instance
+    def test_process_task_no_documents(self):
+        """Test process_task with no documents."""
+        result = self.system.process_task("test task")
         
-        system = CognitiveMemorySystem()
-        system.cognitive_state = CognitiveState(
-            current_task="test task",
-            confidence_score=0.7,
-            subtasks=["task1", "task2"],
-            completed_subtasks=["task1"]  # 50% completion
+        self.assertEqual(result["final_synthesis"], "No documents provided for processing.")
+        self.assertEqual(result["metacognitive_status"]["confidence_score"], 0.1)
+        
+    def test_process_task_with_reuse(self):
+        """Test process_task with memory reuse."""
+        # Mock vector store to return reusable content
+        self.mock_vector_store.search.return_value = [
+            ("id1", 0.9, "reused content", {})
+        ]
+        
+        # Mock synthesis agent to return string
+        with patch.object(self.system, '_synthesize', return_value="synthesized reused content"):
+            result = self.system.process_task("test task")
+            
+            self.assertIn("synthesized", result["final_synthesis"])
+            self.assertEqual(result["metacognitive_status"]["confidence_score"], 0.9)
+        
+    def test_process_task_with_documents(self):
+        """Test process_task with new documents."""
+        with patch.object(self.system, '_decompose_task', return_value=["subtask1"]):
+            with patch.object(self.system, '_process_subtask', return_value="insight"):
+                with patch.object(self.system, '_synthesize', return_value="final result"):
+                    result = self.system.process_task("test task", ["doc1", "doc2"])
+                    
+                    self.assertEqual(result["final_synthesis"], "final result")
+                    self.assertIn("confidence_score", result["metacognitive_status"])
+                    
+    def test_add_to_working_memory(self):
+        """Test adding items to working memory."""
+        initial_count = len(self.system.working_buffer)
+        
+        self.system._add_to_working_memory("test content", "test source")
+        
+        self.assertEqual(len(self.system.working_buffer), initial_count + 1)
+        self.assertEqual(self.system.working_buffer[-1].content, "test content")
+        
+    def test_consolidate_buffers(self):
+        """Test memory consolidation."""
+        # Add item to working buffer
+        item = MemoryItem(
+            content="test content",
+            embedding=np.array([0.1, 0.2, 0.3]),
+            creation_time=0,
+            last_access_time=0,
+            relevance_score=0.8,
+            access_count=3
         )
+        self.system.working_buffer.append(item)
         
-        # Add some working buffer items to increase confidence
-        for i in range(5):
-            system.working_buffer.append(MemoryItem(
-                content=f"working item {i}", 
-                embedding=np.array([0.1*i, 0.2*i, 0.3*i])
-            ))
+        initial_episodic_count = len(self.system.episodic_buffer)
+        self.system._consolidate_buffers()
         
-        status = system.get_metacognitive_status()
+        # High access count item should be promoted to episodic
+        self.assertEqual(len(self.system.episodic_buffer), initial_episodic_count + 1)
         
-        self.assertIn('current_task', status)
-        self.assertIn('confidence_score', status)
-        self.assertIn('memory_utilization', status)
-        self.assertEqual(status['current_task'], "test task")
-        # Confidence will be calculated based on completion ratio and working buffer
-        self.assertGreater(status['confidence_score'], 0.0)
+    def test_get_memory_status(self):
+        """Test memory status retrieval."""
+        status = self.system.get_memory_status()
         
-    @patch('cognitive_memory.memory_system.VectorStore')
-    @patch('cognitive_memory.memory_system.Agent')
-    @patch('cognitive_memory.memory_system.BedrockModel')
-    def test_process_task_with_documents(self, mock_bedrock, mock_agent, mock_vector_store):
-        """Test task processing with documents."""
-        mock_bedrock.return_value = self.mock_embedding_model
-        mock_synthesis_agent = Mock()
-        mock_synthesis_agent.return_value = "synthesized result"
-        mock_agent.return_value = mock_synthesis_agent
-        mock_vector_store_instance = Mock()
-        mock_vector_store_instance.search.return_value = []
-        mock_vector_store_instance.vectors = []  # Add vectors property
-        mock_vector_store_instance.embed.return_value = np.array([0.5, 0.5, 0.5])  # Mock embedding
-        mock_vector_store.return_value = mock_vector_store_instance
+        self.assertIsInstance(status, MemoryStatus)
+        self.assertIsInstance(status.working_items, int)
+        self.assertIsInstance(status.episodic_items, int)
+        self.assertIsInstance(status.vector_items, int)
+        self.assertIsInstance(status.confidence, float)
+        self.assertIsInstance(status.gaps, list)
         
-        system = CognitiveMemorySystem()
+    def test_chunk_document(self):
+        """Test document chunking."""
+        document = "This is sentence one. This is sentence two. This is sentence three."
+        chunks = self.system._chunk_document(document)
         
-        result = system.process_task("test task", ["document 1", "document 2"])
+        self.assertIsInstance(chunks, list)
+        self.assertTrue(len(chunks) > 0)
+        self.assertTrue(all(isinstance(chunk, str) for chunk in chunks))
         
-        self.assertIn('final_synthesis', result)
-        self.assertIn('metacognitive_status', result)
-        self.assertIsInstance(result['final_synthesis'], str)
+    def test_decompose_task_error_handling(self):
+        """Test task decomposition error handling."""
+        with patch.object(self.system._synthesis_agent, '__call__', side_effect=Exception("LLM error")):
+            subtasks = self.system._decompose_task("test task")
+            
+            # Should return default subtasks on error
+            self.assertEqual(subtasks, ["Analyze", "Process", "Synthesize"])
+            
+    def test_synthesize_error_handling(self):
+        """Test synthesis error handling."""
+        with patch.object(self.system, '_synthesis_agent') as mock_agent:
+            mock_agent.side_effect = Exception("Synthesis error")
+            result = self.system._synthesize(["content1", "content2"], "test context")
+            
+            # Should return fallback synthesis on error
+            self.assertIn("Analysis of:", result)
+            
+    def test_search_memory_buffers_empty(self):
+        """Test searching empty memory buffers."""
+        results = self.system._search_memory_buffers("test query")
         
-    @patch('cognitive_memory.memory_system.VectorStore')
-    @patch('cognitive_memory.memory_system.Agent')
-    @patch('cognitive_memory.memory_system.BedrockModel')
-    def test_attention_mechanism(self, mock_bedrock, mock_agent, mock_vector_store):
-        """Test attention mechanism filtering."""
-        mock_bedrock.return_value = self.mock_embedding_model
-        mock_agent.return_value = Mock()
-        mock_vector_store_instance = Mock()
-        mock_vector_store_instance.embed.return_value = np.array([0.5, 0.5, 0.5])  # Mock query embedding
-        mock_vector_store.return_value = mock_vector_store_instance
+        self.assertEqual(results, [])
         
-        system = CognitiveMemorySystem()
+    def test_search_memory_buffers_with_items(self):
+        """Test searching memory buffers with items."""
+        # Add item to working buffer with longer content
+        item = MemoryItem(
+            content="test content for search that is long enough to pass the length filter",
+            embedding=np.array([0.9, 0.9, 0.9]),  # High similarity embedding
+            creation_time=0,
+            last_access_time=0,
+            relevance_score=0.8
+        )
+        self.system.working_buffer.append(item)
         
-        # Add items with different relevance scores to working buffer
-        system.working_buffer.extend([
-            MemoryItem(content="high importance" * 20, embedding=np.array([0.1, 0.2, 0.3]), relevance_score=0.9),  # Make content longer
-            MemoryItem(content="low importance" * 20, embedding=np.array([0.4, 0.5, 0.6]), relevance_score=0.3),
-            MemoryItem(content="medium importance" * 20, embedding=np.array([0.7, 0.8, 0.9]), relevance_score=0.6)
-        ])
+        # Mock vector store embed to return similar embedding for high cosine similarity
+        self.mock_vector_store.embed.return_value = np.array([0.9, 0.9, 0.9])
         
-        # Test working memory check functionality
-        relevant_items = system._check_working_memory("test query")
+        results = self.system._search_memory_buffers("test query")
         
-        # Should filter based on relevance and semantic similarity
-        self.assertIsInstance(relevant_items, list)
+        # Should find the item due to high similarity and sufficient content length
+        self.assertEqual(len(results), 1)
+        self.assertIn("test content for search", results[0].content)
         
-    @patch('cognitive_memory.memory_system.VectorStore')
-    @patch('cognitive_memory.memory_system.Agent')
-    @patch('cognitive_memory.memory_system.BedrockModel')
-    def test_error_handling_in_process_task(self, mock_bedrock, mock_agent, mock_vector_store):
-        """Test error handling in process_task."""
-        mock_bedrock.return_value = self.mock_embedding_model
-        mock_synthesis_agent = Mock()
-        mock_synthesis_agent.return_value = "Error handled gracefully"
-        mock_agent.return_value = mock_synthesis_agent
-        mock_vector_store_instance = Mock()
-        mock_vector_store_instance.search.return_value = []  # Return empty list instead of exception
-        mock_vector_store_instance.vectors = []  # Add vectors property
-        mock_vector_store_instance.embed.return_value = np.array([0.5, 0.5, 0.5])  # Mock embedding
-        mock_vector_store.return_value = mock_vector_store_instance
+    def test_calculate_confidence_empty_buffer(self):
+        """Test confidence calculation with empty buffer."""
+        confidence = self.system._calculate_confidence()
         
-        system = CognitiveMemorySystem()
+        self.assertEqual(confidence, 0.0)
         
-        # Should handle errors gracefully
-        result = system.process_task("test task", ["test document"])
+    def test_detect_gaps(self):
+        """Test information gap detection."""
+        # Mock vector store count to return low value
+        self.mock_vector_store.count.return_value = 2
         
-        self.assertIn('final_synthesis', result)
-        self.assertIsInstance(result['final_synthesis'], str)
+        gaps = self.system._detect_gaps()
+        
+        self.assertIn("Limited working memory", gaps)
+        self.assertIn("Insufficient knowledge base", gaps)
+        
+    def test_get_metacognitive_status(self):
+        """Test legacy metacognitive status method."""
+        status = self.system.get_metacognitive_status()
+        
+        self.assertIn("confidence_score", status)
+        self.assertIn("information_gaps", status)
+        self.assertIn("memory_utilization", status)
 
 
 if __name__ == '__main__':

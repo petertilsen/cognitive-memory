@@ -1,47 +1,46 @@
 """Example usage of the cognitive memory system."""
 
-import os
 from cognitive_memory import CognitiveMemorySystem, MemoryAnalyzer
 
 
 def main():
-    """Demonstrate cognitive memory system usage."""
+    """Example: Building a research assistant with cognitive memory."""
     
-    # Initialize cognitive memory system
-    memory = CognitiveMemorySystem(
-        embedding_model_id="amazon.titan-embed-text-v1",
-        synthesis_model_id="anthropic.claude-3-haiku-20240307-v1:0"
-    )
+    # Step 1: Initialize the memory system
+    memory_system = CognitiveMemorySystem()
     
-    # Example queries showing progressive learning
-    queries = [
-        "What are neural networks?",
-        "What is backpropagation?", 
-        "How do neural networks learn?",
-        "What are the applications of deep learning?"
+    # Step 2: (Optional) Add analyzer for monitoring
+    analyzer = MemoryAnalyzer(memory_system)
+    
+    # Step 3: Use the system to process research queries with documents
+    
+    # First research session - AI basics
+    ai_documents = [
+        "Artificial Intelligence (AI) refers to computer systems that can perform tasks typically requiring human intelligence, such as visual perception, speech recognition, and decision-making.",
+        "Machine learning is a subset of AI that enables systems to automatically learn and improve from experience without being explicitly programmed for every scenario."
     ]
     
-    print("🧠 Cognitive Memory System Demo")
-    print("=" * 50)
+    result1 = memory_system.process_task("What is artificial intelligence?", ai_documents)
+    print("Query 1 Response:", result1['final_synthesis'][:100] + "...")
     
-    for i, query in enumerate(queries, 1):
-        print(f"\n--- Query {i} ---")
-        print(f"Question: {query}")
-        
-        # Process query with cognitive memory
-        result = memory.process_task(query, [])
-        
-        print(f"Response: {result['final_synthesis'][:200]}...")
-        
-        # Show memory analytics
-        analyzer = MemoryAnalyzer(memory)
-        report = analyzer.generate_memory_report()
-        
-        reuse_rate = report['reuse_analysis']['reuse_rate']
-        working_size = report['buffer_analysis']['working_buffer']['size']
-        
-        print(f"Memory Reuse: {reuse_rate:.1%}")
-        print(f"Working Memory: {working_size} items")
+    # Second research session - builds on previous knowledge
+    ml_documents = [
+        "Deep learning uses neural networks with multiple layers to model and understand complex patterns in data, enabling breakthroughs in image recognition and natural language processing.",
+        "Supervised learning trains models on labeled data, while unsupervised learning finds patterns in unlabeled data."
+    ]
+    
+    result2 = memory_system.process_task("How does machine learning work?", ml_documents)
+    print("Query 2 Response:", result2['final_synthesis'][:100] + "...")
+    
+    # Third query - should reuse previous knowledge
+    result3 = memory_system.process_task("What's the difference between AI and machine learning?")
+    print("Query 3 Response:", result3['final_synthesis'][:100] + "...")
+    
+    # Step 4: Check what the system learned
+    print(f"\nMemory Status:")
+    print(f"- Working Memory: {analyzer.get_memory_utilization()['working_buffer']['size']} items")
+    print(f"- Reuse Rate: {analyzer.get_reuse_stats()['reuse_rate']:.1%}")
+    print(f"- Total Events: {len(analyzer.events)}")
 
 
 if __name__ == "__main__":
