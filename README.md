@@ -1,5 +1,9 @@
 # 🧠 Cognitive Memory
 
+![Tests](https://github.com/petertilsen/cognitive-memory/workflows/Tests/badge.svg)
+![Coverage](https://codecov.io/gh/petertilsen/cognitive-memory/branch/main/graph/badge.svg)
+![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+
 A production-ready cognitive memory system for AI agents with human-like learning and memory patterns.
 
 ## ✅ Implemented Features
