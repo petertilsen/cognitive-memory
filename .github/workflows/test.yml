@@ -6,6 +6,12 @@ jobs:
   test:
     runs-on: ubuntu-latest
     
+    services:
+      chromadb:
+        image: chromadb/chroma:latest
+        ports:
+          - 8000:8000
+    
     steps:
     - uses: actions/checkout@v4
     
@@ -14,17 +20,36 @@ jobs:
       with:
         python-version: '3.8'
     
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential
+    
     - name: Install dependencies
       run: |
+        pip install --upgrade pip
         pip install -e .
         pip install pytest pytest-cov
+        pip install numpy scikit-learn
+    
+    - name: Wait for ChromaDB
+      run: |
+        timeout 30 bash -c 'until curl -f http://localhost:8000/api/v1/heartbeat; do sleep 1; done'
+    
+    - name: Set environment variables
+      run: |
+        echo "CHROMA_HOST=localhost" >> $GITHUB_ENV
+        echo "CHROMA_PORT=8000" >> $GITHUB_ENV
+        echo "AWS_ACCESS_KEY_ID=dummy" >> $GITHUB_ENV
+        echo "AWS_SECRET_ACCESS_KEY=dummy" >> $GITHUB_ENV
+        echo "AWS_REGION=us-east-1" >> $GITHUB_ENV
     
     - name: Run tests
       run: |
-        pytest tests/ --cov=cognitive_memory --cov-report=xml
+        pytest tests/ --cov=cognitive_memory --cov-report=xml --cov-report=term-missing
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
         file: ./coverage.xml
-        fail_ci_if_error: true
+        fail_ci_if_error: false
