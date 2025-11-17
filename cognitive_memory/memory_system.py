@@ -41,8 +41,10 @@ class CognitiveMemorySystem:
         self._synthesis_agent = Agent(model=self.synthesis_model)
         self._event_handler = event_handler
         
-        self.working_buffer = deque(maxlen=64)
-        self.episodic_buffer = deque(maxlen=256)
+        self.working_buffer = deque(maxlen=config.memory.working_buffer_size)
+        self.episodic_buffer = deque(maxlen=config.memory.episodic_buffer_size)
+
+        self.decay_rate = config.memory.decay_rate
         
         self.vector_store = VectorStore(
             embedding_model=self.embedding_model,
@@ -213,7 +215,7 @@ class CognitiveMemorySystem:
         initial_working = len(self.working_buffer)
         
         for item in list(self.working_buffer) + list(self.episodic_buffer):
-            item.decay(self.current_time)
+            item.decay(self.current_time, self.decay_rate)
         
         self.working_buffer = deque(
             [item for item in self.working_buffer if item.relevance_score > 0.3],

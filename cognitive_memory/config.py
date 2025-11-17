@@ -5,26 +5,38 @@ import os
 from typing import Dict, Any
 from dataclasses import dataclass, field
 
-from config.settings import MemoryConfig
-
 
 @dataclass
 class ModelConfig:
     """Model configuration settings."""
-    max_tokens: int = 1000
-    temperature: float = 0.7
+    max_tokens: int
+    temperature: float
+
+@dataclass
+class VectorStoreConfig:
+    """Vector store configuration."""
+    chroma_host: str
+    chroma_port: int
+    collection_name: str
+
 
 @dataclass
 class MemoryConfig:
-    """Model configuration settings."""
-    attention_threshold: float = 0.7
-    consolidation_threshold: float = 0.3
+    """Memory system configuration."""
+    working_buffer_size: int
+    episodic_buffer_size: int
+    attention_threshold: float
+    consolidation_threshold: float
+    decay_rate: float
 
 @dataclass
 class Config:
     """Main configuration class."""
-    model: ModelConfig = field(default_factory=ModelConfig)
+    model: ModelConfig
+    memory: MemoryConfig
+    vector_store: VectorStoreConfig
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    vector_store: VectorStoreConfig = field(default_factory=VectorStoreConfig)
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -51,7 +63,15 @@ def load_config() -> Config:
             temperature=float(os.getenv("TEMPERATURE", "0.7"))
         ),
         memory=MemoryConfig(
+            working_buffer_size=int(os.getenv("WORKING_BUFFER_SIZE", "64")),
+            episodic_buffer_size=int(os.getenv("EPISODIC_BUFFER_SIZE", "256")),
             attention_threshold=float(os.getenv("ATTENTION_THRESHOLD", "0.7")),
-            consolidation_threshold=float(os.getenv("CONSOLIDATION_THRESHOLD", "0.3"))
+            consolidation_threshold=float(os.getenv("CONSOLIDATION_THRESHOLD", "0.3")),
+            decay_rate=float(os.getenv("DECAY_RATE", "0.1"))
+        ),
+        vector_store=VectorStoreConfig(
+            chroma_host=os.getenv("CHROMA_HOST", "localhost"),
+            chroma_port=int(os.getenv("CHROMA_PORT", "8000")),
+            collection_name=os.getenv("COLLECTION_NAME", "cognitive_memory")
         )
     )

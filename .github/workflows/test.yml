@@ -22,7 +22,7 @@ jobs:
     - name: Install dependencies
       run: |
         pip install --upgrade pip
-        pip install -e .[dev]
+        pip install -e .
         pip install pytest pytest-cov
     
     - name: Set environment variables
